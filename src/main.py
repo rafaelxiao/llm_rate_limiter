@@ -1,6 +1,7 @@
 import json
 import logging
 from contextlib import asynccontextmanager
+import httpx
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from src import config as config_module
@@ -111,7 +112,13 @@ async def chat_completions(request: Request, _: None = Depends(verify_api_key)):
             },
         )
     else:
-        resp = await provider.chat_completion(body)
+        try:
+            resp = await provider.chat_completion(body)
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=e.response.text,
+            )
         usage = resp.get("usage", {})
         total_tokens = usage.get("total_tokens", 0)
         limiter.consume_tpm(total_tokens)
