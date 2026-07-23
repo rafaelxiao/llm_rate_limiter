@@ -1,26 +1,25 @@
 import json
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
-from src.config import load_config, AppConfig
+from src import config as config_module
 from src.rate_limiter import ModelRateLimiter, RateLimitTimeoutError
 from src.provider import ProviderAdapter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="LLM Rate Limiter Proxy")
-
 # Populated at startup
-config: AppConfig | None = None
+config: config_module.AppConfig | None = None
 rate_limiters: dict[str, ModelRateLimiter] = {}
 providers: dict[str, ProviderAdapter] = {}
 
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global config, rate_limiters, providers
-    config = load_config()
+    config = config_module.load_config()
     for m in config.models:
         rate_limiters[m.name] = ModelRateLimiter(
             rpm=m.rpm, tpm=m.tpm, queue_timeout=m.queue_timeout_seconds
@@ -28,6 +27,10 @@ async def startup():
     for name, p in config.providers.items():
         providers[name] = ProviderAdapter(p)
     logger.info(f"Started with {len(config.models)} models and {len(config.providers)} providers")
+    yield
+
+
+app = FastAPI(title="LLM Rate Limiter Proxy", lifespan=lifespan)
 
 
 async def verify_api_key(request: Request):
