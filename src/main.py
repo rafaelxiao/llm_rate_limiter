@@ -104,7 +104,7 @@ async def chat_completions(request: Request, _: None = Depends(verify_api_key)):
 
     if stream:
         return StreamingResponse(
-            _stream_response(provider, body, model_name, limiter),
+            _stream_response(provider, body, limiter),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -115,6 +115,10 @@ async def chat_completions(request: Request, _: None = Depends(verify_api_key)):
         try:
             resp = await provider.chat_completion(body)
         except httpx.HTTPStatusError as e:
+            limiter.refund_rpm()
+            if e.response.status_code == 429:
+                limiter.penalize_rpm()
+                logger.warning(f"Upstream 429 for model '{model_name}', penalty applied")
             raise HTTPException(
                 status_code=e.response.status_code,
                 detail=e.response.text,
@@ -128,24 +132,42 @@ async def chat_completions(request: Request, _: None = Depends(verify_api_key)):
 async def _stream_response(
     provider: ProviderAdapter,
     body: dict,
-    model_name: str,
     limiter: ModelRateLimiter,
 ):
     """SSE generator for streaming responses. Extracts TPM usage from final chunk."""
     total_tokens = 0
-    async for line in provider.chat_completion_stream(body):
-        yield f"{line}\n\n"
-        # Try to extract usage from chunks that have usage info
-        if '"usage":' in line:
-            try:
-                data_str = line[len("data: "):]
-                if data_str == "[DONE]":
-                    break
-                data = json.loads(data_str)
-                usage = data.get("usage", {})
-                if usage:
-                    total_tokens = usage.get("total_tokens", total_tokens)
-            except (json.JSONDecodeError, KeyError):
-                pass
+    upstream_error = None
+    try:
+        async for line in provider.chat_completion_stream(body):
+            yield f"{line}\n\n"
+            # Try to extract usage from chunks that have usage info
+            if '"usage":' in line:
+                try:
+                    data_str = line[len("data: "):]
+                    if data_str == "[DONE]":
+                        break
+                    data = json.loads(data_str)
+                    usage = data.get("usage", {})
+                    if usage:
+                        total_tokens = usage.get("total_tokens", total_tokens)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+    except httpx.HTTPStatusError as e:
+        upstream_error = e
+    except Exception as e:
+        upstream_error = e
+
+    if upstream_error is not None:
+        limiter.refund_rpm()
+        if isinstance(upstream_error, httpx.HTTPStatusError) and upstream_error.response.status_code == 429:
+            limiter.penalize_rpm()
+        error_data = {
+            "error": {
+                "message": str(upstream_error),
+                "type": "upstream_error",
+            }
+        }
+        yield f"data: {json.dumps(error_data)}\n\n"
+    else:
+        limiter.consume_tpm(total_tokens)
     yield "data: [DONE]\n\n"
-    limiter.consume_tpm(total_tokens)

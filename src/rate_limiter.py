@@ -79,3 +79,24 @@ class ModelRateLimiter:
     def consume_tpm(self, tokens: int) -> None:
         """Deduct TPM tokens after a response completes."""
         self.tpm_bucket.consume(float(tokens))
+
+    def refund_rpm(self) -> None:
+        """Refund the RPM token consumed by acquire().
+
+        Called when the upstream call fails (e.g. 429, 5xx) so the
+        consumed RPM slot isn't wasted on a failed request.
+        """
+        self.rpm_bucket._refill()
+        self.rpm_bucket._tokens += 1
+        # Don't exceed capacity — if bucket was already full, cap it
+        if self.rpm_bucket._tokens > self.rpm_bucket.capacity:
+            self.rpm_bucket._tokens = self.rpm_bucket.capacity
+
+    def penalize_rpm(self, penalty: int = 5) -> None:
+        """Consume extra RPM tokens as penalty for upstream 429.
+
+        When upstream returns 429, our limits are too optimistic.
+        Penalizing makes subsequent requests wait, effectively
+        self-correcting the rate limiter to the real limit.
+        """
+        self.rpm_bucket.consume(float(penalty))
