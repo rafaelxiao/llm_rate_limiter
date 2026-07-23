@@ -1,0 +1,29 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 6767,
+    "api_key": "sk-your-proxy-key-here"
+  },
+  "providers": {
+    "tencent": {
+      "base_url": "https://tokenhub.tencentmaas.com/v1",
+      "api_key": "sk-your-tencent-api-key-here"
+    }
+  },
+  "models": [
+    {
+      "name": "deepseek-v4-pro-202606",
+      "provider": "tencent",
+      "rpm": 60,
+      "tpm": 1000000,
+      "queue_timeout_seconds": 300
+    },
+    {
+      "name": "deepseek-v4-flash-202605",
+      "provider": "tencent",
+      "rpm": 60,
+      "tpm": 1000000,
+      "queue_timeout_seconds": 300
+    }
+  ]
+}
