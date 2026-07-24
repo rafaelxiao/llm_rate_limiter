@@ -55,6 +55,7 @@ class ModelRateLimiter:
 
     def __init__(self, rpm: int, tpm: int, queue_timeout: float):
         self.rpm_original = float(rpm)
+        self.tpm_original = float(tpm)
         self.rpm_bucket = TokenBucket(capacity=float(rpm), refill_rate=rpm / 60.0)
         self.tpm_bucket = TokenBucket(capacity=float(tpm), refill_rate=tpm / 60.0)
         self.queue_timeout = queue_timeout
@@ -94,23 +95,33 @@ class ModelRateLimiter:
             self.rpm_bucket._tokens = self.rpm_bucket.capacity
 
     def penalize_rpm(self) -> None:
-        """Adaptive backoff: halve the RPM capacity on upstream 429.
-
-        Drops the ceiling so refill alone won't restore full speed.
-        The limiter converges toward the actual upstream limit over time.
-        """
+        """Adaptive backoff: halve the RPM capacity on upstream 429."""
         self.rpm_bucket.capacity = max(1.0, self.rpm_bucket.capacity * 0.5)
-        # Drain tokens to the new ceiling so the penalty takes effect immediately
         if self.rpm_bucket._tokens > self.rpm_bucket.capacity:
             self.rpm_bucket._tokens = self.rpm_bucket.capacity
 
-    def reward_rpm(self) -> None:
-        """After a successful request, gradually restore RPM capacity.
+    def penalize_tpm(self) -> None:
+        """Adaptive backoff: halve the TPM capacity on upstream 429.
 
-        Increases capacity by 10% toward the original, so the limiter
-        can recover if the upstream limit was only temporarily reduced.
+        When the upstream's TPM limit is the real bottleneck, we need
+        to reduce TPM ceiling too — not just RPM.
+        """
+        self.tpm_bucket.capacity = max(1.0, self.tpm_bucket.capacity * 0.5)
+        if self.tpm_bucket._tokens > self.tpm_bucket.capacity:
+            self.tpm_bucket._tokens = self.tpm_bucket.capacity
+
+    def reward(self) -> None:
+        """After a successful request, gradually restore both capacities.
+
+        Each success increases capacity by 10% toward the original,
+        so the limiter recovers if the upstream limit was only
+        temporarily reduced.
         """
         self.rpm_bucket.capacity = min(
             self.rpm_original,
-            self.rpm_bucket.capacity * 1.1 + 0.5,  # +0.5 rounds up small values
+            self.rpm_bucket.capacity * 1.1 + 0.5,
+        )
+        self.tpm_bucket.capacity = min(
+            self.tpm_original,
+            self.tpm_bucket.capacity * 1.1 + 0.5,
         )

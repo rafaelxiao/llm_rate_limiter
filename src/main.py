@@ -126,7 +126,7 @@ async def chat_completions(request: Request, _: None = Depends(verify_api_key)):
         usage = resp.get("usage", {})
         total_tokens = usage.get("total_tokens", 0)
         limiter.consume_tpm(total_tokens)
-        limiter.reward_rpm()
+        limiter.reward()
         return JSONResponse(resp)
 
 
@@ -165,6 +165,7 @@ async def _stream_response(
         if isinstance(upstream_error, httpx.HTTPStatusError):
             if upstream_error.response.status_code == 429:
                 limiter.penalize_rpm()
+                limiter.penalize_tpm()
             status_code = upstream_error.response.status_code
             message = upstream_error.response.text[:500]
             error_type = "upstream_http_error"
@@ -186,5 +187,5 @@ async def _stream_response(
         yield f"data: {json.dumps(error_data)}\n\n"
     else:
         limiter.consume_tpm(total_tokens)
-        limiter.reward_rpm()
+        limiter.reward()
     yield "data: [DONE]\n\n"

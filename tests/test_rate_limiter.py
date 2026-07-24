@@ -126,22 +126,36 @@ def test_penalize_rpm_halves_capacity():
     assert limiter.rpm_bucket.capacity >= 1.0
 
 
-def test_reward_rpm_restores_capacity():
+def test_reward_restores_both_capacities():
     limiter = ModelRateLimiter(rpm=60, tpm=1000, queue_timeout=5.0)
-    limiter.rpm_bucket.capacity = 15.0  # simulate after penalties
-    limiter.reward_rpm()
-    assert limiter.rpm_bucket.capacity == pytest.approx(17.0, rel=0.01)  # 15 * 1.1 + 0.5
-    limiter.reward_rpm()
-    assert limiter.rpm_bucket.capacity == pytest.approx(19.2, rel=0.01)  # 17 * 1.1 + 0.5
+    limiter.rpm_bucket.capacity = 15.0
+    limiter.tpm_bucket.capacity = 500.0
+    limiter.reward()
+    # RPM: 15 * 1.1 + 0.5 = 17.0
+    assert limiter.rpm_bucket.capacity == pytest.approx(17.0, rel=0.01)
+    # TPM: 500 * 1.1 + 0.5 = 550.5
+    assert limiter.tpm_bucket.capacity == pytest.approx(550.5, rel=0.01)
 
 
-def test_reward_rpm_never_exceeds_original():
+def test_reward_never_exceeds_originals():
     limiter = ModelRateLimiter(rpm=60, tpm=1000, queue_timeout=5.0)
     limiter.rpm_bucket.capacity = 55.0
-    limiter.reward_rpm()
+    limiter.tpm_bucket.capacity = 950.0
+    limiter.reward()
     assert limiter.rpm_bucket.capacity == 60.0  # capped at original
-    limiter.reward_rpm()
+    assert limiter.tpm_bucket.capacity == 1000.0  # capped at original
+    limiter.reward()
     assert limiter.rpm_bucket.capacity == 60.0  # still capped
+    assert limiter.tpm_bucket.capacity == 1000.0
+
+
+def test_penalize_tpm_halves_capacity():
+    limiter = ModelRateLimiter(rpm=60, tpm=1000000, queue_timeout=5.0)
+    limiter.penalize_tpm()
+    assert limiter.tpm_bucket.capacity == 500000.0
+    limiter.penalize_tpm()
+    assert limiter.tpm_bucket.capacity == 250000.0
+    assert limiter.tpm_bucket.capacity >= 1.0  # never below 1
 
 
 @pytest.mark.asyncio
