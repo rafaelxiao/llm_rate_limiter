@@ -178,7 +178,12 @@ async def _stream_response(
                 limiter.penalize_rpm()
                 limiter.penalize_tpm()
             status_code = upstream_error.response.status_code
-            message = upstream_error.response.text[:500]
+            # Streaming responses need explicit read() before accessing .text
+            try:
+                await upstream_error.response.aread()
+                message = upstream_error.response.text[:500]
+            except Exception:
+                message = f"HTTP {status_code}"
             error_type = "upstream_http_error"
         elif isinstance(upstream_error, httpx.RequestError):
             status_code = 502
