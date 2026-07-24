@@ -126,6 +126,7 @@ async def chat_completions(request: Request, _: None = Depends(verify_api_key)):
         usage = resp.get("usage", {})
         total_tokens = usage.get("total_tokens", 0)
         limiter.consume_tpm(total_tokens)
+        limiter.reward_rpm()
         return JSONResponse(resp)
 
 
@@ -185,4 +186,5 @@ async def _stream_response(
         yield f"data: {json.dumps(error_data)}\n\n"
     else:
         limiter.consume_tpm(total_tokens)
+        limiter.reward_rpm()
     yield "data: [DONE]\n\n"

@@ -54,6 +54,7 @@ class ModelRateLimiter:
     """
 
     def __init__(self, rpm: int, tpm: int, queue_timeout: float):
+        self.rpm_original = float(rpm)
         self.rpm_bucket = TokenBucket(capacity=float(rpm), refill_rate=rpm / 60.0)
         self.tpm_bucket = TokenBucket(capacity=float(tpm), refill_rate=tpm / 60.0)
         self.queue_timeout = queue_timeout
@@ -92,11 +93,24 @@ class ModelRateLimiter:
         if self.rpm_bucket._tokens > self.rpm_bucket.capacity:
             self.rpm_bucket._tokens = self.rpm_bucket.capacity
 
-    def penalize_rpm(self, penalty: int = 5) -> None:
-        """Consume extra RPM tokens as penalty for upstream 429.
+    def penalize_rpm(self) -> None:
+        """Adaptive backoff: halve the RPM capacity on upstream 429.
 
-        When upstream returns 429, our limits are too optimistic.
-        Penalizing makes subsequent requests wait, effectively
-        self-correcting the rate limiter to the real limit.
+        Drops the ceiling so refill alone won't restore full speed.
+        The limiter converges toward the actual upstream limit over time.
         """
-        self.rpm_bucket.consume(float(penalty))
+        self.rpm_bucket.capacity = max(1.0, self.rpm_bucket.capacity * 0.5)
+        # Drain tokens to the new ceiling so the penalty takes effect immediately
+        if self.rpm_bucket._tokens > self.rpm_bucket.capacity:
+            self.rpm_bucket._tokens = self.rpm_bucket.capacity
+
+    def reward_rpm(self) -> None:
+        """After a successful request, gradually restore RPM capacity.
+
+        Increases capacity by 10% toward the original, so the limiter
+        can recover if the upstream limit was only temporarily reduced.
+        """
+        self.rpm_bucket.capacity = min(
+            self.rpm_original,
+            self.rpm_bucket.capacity * 1.1 + 0.5,  # +0.5 rounds up small values
+        )

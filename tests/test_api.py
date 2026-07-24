@@ -228,9 +228,8 @@ async def test_upstream_429_refunds_and_penalizes(client):
     )
 
     assert resp.status_code == 429
-    # RPM should be refunded (back to before) then penalized (minus 5)
-    # So net: roughly rpm_before - 5
-    assert limiter.rpm_bucket.tokens == pytest.approx(rpm_before - 5, rel=0.05)
+    # Penalize halves capacity (60 -> 30), tokens drained to new ceiling
+    assert limiter.rpm_bucket.capacity == 30.0
 
     await main_providers["mockhub"]._client.aclose()
 

@@ -111,18 +111,49 @@ def test_refund_rpm_does_not_exceed_capacity():
     assert limiter.rpm_bucket.tokens <= limiter.rpm_bucket.capacity
 
 
-def test_penalize_rpm_reduces_tokens():
-    limiter = ModelRateLimiter(rpm=10, tpm=1000, queue_timeout=5.0)
-    rpm_before = limiter.rpm_bucket.tokens
-    limiter.penalize_rpm(penalty=3)
-    assert limiter.rpm_bucket.tokens == pytest.approx(rpm_before - 3, rel=0.01)
+def test_penalize_rpm_halves_capacity():
+    limiter = ModelRateLimiter(rpm=60, tpm=1000, queue_timeout=5.0)
+    assert limiter.rpm_bucket.capacity == 60.0
+    limiter.penalize_rpm()
+    assert limiter.rpm_bucket.capacity == 30.0
+    limiter.penalize_rpm()
+    assert limiter.rpm_bucket.capacity == 15.0
+    limiter.penalize_rpm()
+    assert limiter.rpm_bucket.capacity == 7.5
+    # Never drops below 1
+    for _ in range(10):
+        limiter.penalize_rpm()
+    assert limiter.rpm_bucket.capacity >= 1.0
+
+
+def test_reward_rpm_restores_capacity():
+    limiter = ModelRateLimiter(rpm=60, tpm=1000, queue_timeout=5.0)
+    limiter.rpm_bucket.capacity = 15.0  # simulate after penalties
+    limiter.reward_rpm()
+    assert limiter.rpm_bucket.capacity == pytest.approx(17.0, rel=0.01)  # 15 * 1.1 + 0.5
+    limiter.reward_rpm()
+    assert limiter.rpm_bucket.capacity == pytest.approx(19.2, rel=0.01)  # 17 * 1.1 + 0.5
+
+
+def test_reward_rpm_never_exceeds_original():
+    limiter = ModelRateLimiter(rpm=60, tpm=1000, queue_timeout=5.0)
+    limiter.rpm_bucket.capacity = 55.0
+    limiter.reward_rpm()
+    assert limiter.rpm_bucket.capacity == 60.0  # capped at original
+    limiter.reward_rpm()
+    assert limiter.rpm_bucket.capacity == 60.0  # still capped
 
 
 @pytest.mark.asyncio
 async def test_penalty_causes_future_blocking():
     limiter = ModelRateLimiter(rpm=5, tpm=1000, queue_timeout=0.5)
-    # Penalize heavily
-    limiter.penalize_rpm(penalty=10)
-    # Bucket should be negative, so acquire should block
+    # Penalize until capacity is 1
+    limiter.penalize_rpm()  # 5 -> 2.5
+    limiter.penalize_rpm()  # 2.5 -> 1.25
+    # Drain tokens to match new capacity
+    limiter.rpm_bucket._tokens = limiter.rpm_bucket.capacity
+    # Bucket now only holds 1.25 tokens, use both
+    limiter.rpm_bucket.consume(1.25)
+    # Should block now
     with pytest.raises(RateLimitTimeoutError):
         await limiter.acquire()
