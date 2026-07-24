@@ -9,7 +9,7 @@ class ProviderAdapter:
     def __init__(self, provider: ProviderConfig):
         self.base_url = provider.base_url.rstrip("/")
         self.api_key = provider.api_key
-        self._client = httpx.AsyncClient()
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
 
     async def chat_completion(self, body: dict) -> dict:
         """Send a non-streaming chat completion request upstream."""

@@ -118,10 +118,21 @@ async def chat_completions(request: Request, _: None = Depends(verify_api_key)):
             limiter.refund_rpm()
             if e.response.status_code == 429:
                 limiter.penalize_rpm()
-                logger.warning(f"Upstream 429 for model '{model_name}', penalty applied")
             raise HTTPException(
                 status_code=e.response.status_code,
                 detail=e.response.text,
+            )
+        except httpx.TimeoutException:
+            limiter.refund_rpm()
+            raise HTTPException(
+                status_code=504,
+                detail=json.dumps({"error": {"message": "upstream timeout", "type": "upstream_timeout"}}),
+            )
+        except httpx.RequestError as e:
+            limiter.refund_rpm()
+            raise HTTPException(
+                status_code=502,
+                detail=json.dumps({"error": {"message": str(e), "type": "upstream_connection_error"}}),
             )
         usage = resp.get("usage", {})
         total_tokens = usage.get("total_tokens", 0)
