@@ -256,7 +256,7 @@ async def test_streaming_upstream_error_yields_error_chunk(client):
     # Streaming should still return 200 (SSE framing), but contain error
     assert resp.status_code == 200
     text = resp.text
-    assert "upstream_error" in text
+    assert "upstream_http_error" in text
     assert "data: [DONE]" in text
 
     await main_providers["mockhub"]._client.aclose()

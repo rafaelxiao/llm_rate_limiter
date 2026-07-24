@@ -154,17 +154,32 @@ async def _stream_response(
                     pass
     except httpx.HTTPStatusError as e:
         upstream_error = e
+    except httpx.RequestError as e:
+        upstream_error = e
     except Exception as e:
         upstream_error = e
 
     if upstream_error is not None:
         limiter.refund_rpm()
-        if isinstance(upstream_error, httpx.HTTPStatusError) and upstream_error.response.status_code == 429:
-            limiter.penalize_rpm()
+        if isinstance(upstream_error, httpx.HTTPStatusError):
+            if upstream_error.response.status_code == 429:
+                limiter.penalize_rpm()
+            status_code = upstream_error.response.status_code
+            message = upstream_error.response.text[:500]
+            error_type = "upstream_http_error"
+        elif isinstance(upstream_error, httpx.RequestError):
+            status_code = 502
+            message = str(upstream_error) or type(upstream_error).__name__
+            error_type = "upstream_connection_error"
+        else:
+            status_code = 500
+            message = str(upstream_error) or type(upstream_error).__name__
+            error_type = "upstream_error"
         error_data = {
             "error": {
-                "message": str(upstream_error),
-                "type": "upstream_error",
+                "message": message,
+                "type": error_type,
+                "code": status_code,
             }
         }
         yield f"data: {json.dumps(error_data)}\n\n"
